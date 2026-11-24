@@ -36,7 +36,8 @@ def parse_candles(payload: dict) -> pd.DataFrame:
 
 class UpstoxClient:
     def __init__(self, token: str | None = None):
-        self.token = token or os.environ.get("UPSTOX_ACCESS_TOKEN")
+        from .auth import load_token
+        self.token = token or load_token()
         self.s = requests.Session()
         self.s.headers.update({"Accept": "application/json"})
         if self.token:

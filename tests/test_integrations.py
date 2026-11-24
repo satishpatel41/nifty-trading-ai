@@ -87,3 +87,18 @@ def test_validate_report_shape():
     for k in ("backtest", "deflated_sharpe", "pbo", "walk_forward", "drawdown", "verdict"):
         assert k in rep
     assert rep["deflated_sharpe"]["trials"] >= 18
+
+
+def test_auth_helpers(tmp_path, monkeypatch):
+    import pytest
+    from nifty_upstox import auth
+    assert auth.code_from_redirect("https://x.test/cb?code=abc123&state=1") == "abc123"
+    with pytest.raises(ValueError):
+        auth.code_from_redirect("https://x.test/cb?error=denied")
+    assert "client_id=K" in auth.login_url("K", "https://x.test/cb")
+    monkeypatch.delenv("UPSTOX_ACCESS_TOKEN", raising=False)
+    assert auth.load_token(tmp_path) is None
+    p = auth.save_token(tmp_path, {"access_token": "TOK"})
+    assert oct(p.stat().st_mode)[-3:] == "600" and auth.load_token(tmp_path) == "TOK"
+    monkeypatch.setenv("UPSTOX_ACCESS_TOKEN", "ENV")
+    assert auth.load_token(tmp_path) == "ENV"

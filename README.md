@@ -18,6 +18,19 @@ is its general idea of an option liquidity check and an explicit "no trade" outc
 
 **Signals and gates are for human review; nothing trades live unless you explicitly enable it.**
 
+## Getting an access token
+
+Create an app at account.upstox.com/developer/apps (set a redirect URL), then:
+
+```bash
+export UPSTOX_API_KEY=... UPSTOX_API_SECRET=... UPSTOX_REDIRECT_URI=...
+python -m nifty_upstox login             # prints a login link; you paste back the redirected URL
+python -m nifty_upstox login --browser   # or: visible Playwright window, you log in yourself
+```
+
+You type your own credentials and OTP; the code only reads the `code` in the redirect and saves the token to
+`state/token.json` (git-ignored, valid for the day). Tokens are never taken from an existing web session.
+
 ## Strategy (`strategy.py`)
 
 | Piece | Rule |

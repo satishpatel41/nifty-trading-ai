@@ -51,6 +51,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--index", type=int, default=0)
     p.add_argument("--reply", default="")
 
+    p = sub.add_parser("login", help="get today's Upstox access token (you log in yourself)")
+    p.add_argument("--browser", action="store_true", help="open a visible Playwright browser (needs playwright installed)")
+
     sub.add_parser("demo", help="offline demo on synthetic data (no network, results are meaningless)")
 
     p = sub.add_parser("scan", help="after market close: build plan for next session")
@@ -108,6 +111,10 @@ def main(argv: list[str] | None = None) -> int:
             ok, msg = tk.approve(a.state, entries[a.index], cfg.instrument_mode, a.reply)
             print(msg)
             return 0 if ok else 1
+
+    elif a.cmd == "login":
+        from .auth import run_login
+        print(run_login(a.state, a.browser))
 
     elif a.cmd == "demo":
         from .synthetic import make_data
