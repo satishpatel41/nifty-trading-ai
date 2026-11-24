@@ -70,6 +70,13 @@ class UpstoxClient:
         data = r.json()["data"]
         return float(next(iter(data.values()))["last_price"])
 
+    def option_chain(self, underlying_key: str, expiry: date) -> list[dict]:
+        self._require_token()
+        r = self.s.get(f"{BASE}/v2/option/chain",
+                       params={"instrument_key": underlying_key, "expiry_date": expiry.isoformat()}, timeout=20)
+        r.raise_for_status()
+        return r.json().get("data", [])
+
     def instruments(self, cache: str | Path = "state/NSE_instruments.json") -> list[dict]:
         cache = Path(cache)
         if cache.exists() and datetime.fromtimestamp(cache.stat().st_mtime).date() == date.today():

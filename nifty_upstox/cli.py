@@ -41,6 +41,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-gate", action="store_true", help="disable regime gate (for comparison)")
     p.add_argument("--walk-forward", type=int, default=0, metavar="N")
 
+    p = sub.add_parser("validate", help="deflated Sharpe, PBO, purged walk-forward, drawdown analysis")
+    p.add_argument("--csv", help="Nifty daily CSV; omit to use synthetic data")
+    p.add_argument("--extra-trials", type=int, default=0,
+                   help="other variants you tried before settling on these parameters")
+
+    p = sub.add_parser("tickets", help="show / approve order tickets (required for --live)")
+    p.add_argument("action", choices=["show", "approve"])
+    p.add_argument("--index", type=int, default=0)
+    p.add_argument("--reply", default="")
+
     sub.add_parser("demo", help="offline demo on synthetic data (no network, results are meaningless)")
 
     p = sub.add_parser("scan", help="after market close: build plan for next session")
@@ -69,6 +79,35 @@ def main(argv: list[str] | None = None) -> int:
         _print_stats("backtest", res.stats)
         if a.walk_forward:
             print(walk_forward(df, cfg, a.walk_forward, vix=vix, use_regime_gate=not a.no_gate).to_string(index=False))
+
+    elif a.cmd == "validate":
+        import json as _json
+        from .validate import validate
+        if a.csv:
+            df = load_csv(a.csv)
+            vp = a.csv.replace(".csv", "_vix.csv")
+            vix = load_csv(vp)["close"] if os.path.exists(vp) else None
+        else:
+            from .synthetic import make_data
+            df, vix = make_data(), None
+            print("(synthetic data: results only prove the code runs)")
+        print(_json.dumps(validate(df, cfg, a.extra_trials, vix), indent=2, default=str))
+
+    elif a.cmd == "tickets":
+        import json as _json
+        from pathlib import Path as _P
+        from . import tickets as tk
+        plan_p = _P(a.state) / "plan.json"
+        entries = _json.loads(plan_p.read_text())["entries"] if plan_p.exists() else []
+        if not entries:
+            print("No pending entries in plan.json (run `scan` first).")
+        elif a.action == "show":
+            for i, en in enumerate(entries):
+                print(f"[{i}] " + tk.ticket_text(en, cfg.instrument_mode, cfg.capital, cfg.risk_pct))
+        else:
+            ok, msg = tk.approve(a.state, entries[a.index], cfg.instrument_mode, a.reply)
+            print(msg)
+            return 0 if ok else 1
 
     elif a.cmd == "demo":
         from .synthetic import make_data

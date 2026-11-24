@@ -13,7 +13,12 @@ from .journal import Journal
 from .risk import RiskState
 from .sizing import futures_lots, option_lots
 from .strategy import add_signals, assess_posture, new_position, step_position
-from .upstox import UpstoxClient, resolve_future, resolve_option
+from . import tickets
+from .config import NIFTY_KEY
+from .liquidity import chain_market_data, liquidity_blocks
+from .overlay import overlay
+from .timemachine import replay
+from .upstox import UpstoxClient, _expiry_date, resolve_future, resolve_option
 
 
 def _load(path: Path, default):
@@ -47,12 +52,21 @@ def scan(cfg: Config, df: pd.DataFrame, state_dir: str, vix: float | None = None
 
     posture = assess_posture(bar, cfg, vix)
     side = 1 if bar["long_sig"] else (-1 if bar["short_sig"] else 0)
+    ov = overlay(df)
     entries = []
     if side and (posture.allow_long if side == 1 else posture.allow_short):
-        entries.append({"side": side, "signal_date": day, "close": float(bar["close"]),
-                        "atr": float(bar["atr"]), "size_mult": posture.size_mult})
+        if cfg.overlay_block_ranging and ov["trend"] != "trending":
+            j.log("entry_blocked", reason=f"regime overlay: {ov['quadrant']} (not trending)")
+        else:
+            en = {"side": side, "signal_date": day, "close": float(bar["close"]),
+                  "atr": float(bar["atr"]), "size_mult": posture.size_mult}
+            try:
+                en["timemachine"] = replay(df, side, en["close"], en["atr"], cfg, replays=cfg.replay_runs)
+            except ValueError:
+                pass  # not enough history for a replay
+            entries.append(en)
 
-    plan = {"asof": day, "posture": posture.__dict__, "signal_raw": side,
+    plan = {"asof": day, "posture": posture.__dict__, "regime_overlay": ov, "signal_raw": side,
             "entries": entries, "exits": exits}
     (sd / "plan.json").write_text(json.dumps(plan, indent=2))
     j.log("scan", **plan)
@@ -105,6 +119,10 @@ def execute(cfg: Config, state_dir: str, broker, client: UpstoxClient | None, no
             j.log("entry_blocked", entry=en, reasons=blocks)
             msgs.append("ENTRY BLOCKED: " + "; ".join(blocks))
             continue
+        if broker.live and not tickets.is_approved(sd, en, cfg.instrument_mode):
+            msgs.append("NOT APPROVED: run `tickets show` then `tickets approve`; live orders need an explicit yes")
+            j.log("entry_unapproved", entry=en)
+            continue
         side = en["side"]
         instruments = client.instruments() if (client and client.token) else None
         if cfg.instrument_mode == "futures":
@@ -121,6 +139,16 @@ def execute(cfg: Config, state_dir: str, broker, client: UpstoxClient | None, no
                 continue
             und = price_of("NSE_INDEX|Nifty 50", en["close"])
             inst = resolve_option(instruments, und, side, now.date(), cfg.opt_min_dte)
+            try:
+                rows = client.option_chain(NIFTY_KEY, _expiry_date(inst["expiry"]))
+                md, _ = chain_market_data(rows, inst["instrument_key"])
+                lq = liquidity_blocks(md, cfg) if md is not None else ["contract not found in option chain"]
+            except Exception as e:  # fail closed: no data, no trade
+                lq = [f"option chain unavailable ({e})"]
+            if lq:
+                j.log("entry_blocked", entry=en, reasons=lq)
+                msgs.append("NO TRADE (option liquidity): " + "; ".join(lq))
+                continue
             lot = int(inst.get("lot_size") or cfg.lot_size)
             px = price_of(inst["instrument_key"], None)
             pos = new_position(side, und, en["atr"], cfg)  # underlying levels drive exits

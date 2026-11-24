@@ -38,6 +38,11 @@ class Config:
     max_margin_pct: float = 0.6       # cap on margin used vs capital
     opt_sl_pct: float = 0.35          # option premium stop (fraction of premium)
     opt_min_dte: int = 3              # skip expiries closer than this
+    opt_max_spread_pct: float = 0.03  # block if bid-ask spread > 3% of mid
+    opt_min_oi: int = 100_000         # block thin contracts
+    opt_min_volume: int = 10_000
+    overlay_block_ranging: bool = False  # also block entries when regime overlay says not trending
+    replay_runs: int = 10_000         # trade replays attached to each planned entry
 
     # --- circuit breakers (drawdown-circuit-breaker style) ---
     daily_loss_pct: float = 0.02

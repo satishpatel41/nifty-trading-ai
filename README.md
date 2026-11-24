@@ -3,13 +3,20 @@
 A daily-bar **trend-pullback** strategy for Nifty 50 with buy/sell signals, a regime gate,
 risk-based sizing, circuit breakers, a trade journal, a backtester and an Upstox adapter.
 
-Built by porting the *workflow ideas* from
-[tradermonty/claude-trading-skills](https://github.com/tradermonty/claude-trading-skills)
-(market-regime gate, position sizer, drawdown circuit breaker, pre-trade discipline gate,
-trader-memory journal, backtest-before-trade). That repo is US-equity oriented, has no Upstox
-or Indian-market support, and says it is "not a broker execution platform", so none of its
-code is used directly. It is a process toolkit, and this project follows the same stance:
-**signals and gates are for human review; nothing trades live unless you explicitly enable it.**
+Built on three MIT-licensed skill collections (details and commits in `third_party/NOTICE.md`).
+None covers India or Upstox, so they are used like this:
+
+| Source | What we took | How |
+|---|---|---|
+| [agiprolabs/claude-trading-skills](https://github.com/agiprolabs/claude-trading-skills) | regime detection (ADX / ATR percentile / Hurst), walk-forward splitter, Deflated Sharpe, PBO, drawdown analysis | **vendored, imported as code** (`third_party/`) |
+| [Jakeschincariol/day-trader-skill](https://github.com/Jakeschincariol/day-trader-skill) | trade "time machine" replay, per-order approval ticket | ideas re-implemented for Nifty daily bars |
+| [tradermonty/claude-trading-skills](https://github.com/tradermonty/claude-trading-skills) | regime posture, position sizing, circuit breakers, journal | ideas re-implemented (its tools are USD/US-calendar based) |
+
+The [CASHPARENCY post](https://www.cashparency.org/post/claude-ai-option-trading) is a sales page for a paid,
+analysis-only Nifty options skill. It claims no results and discloses no rules; the only thing used
+is its general idea of an option liquidity check and an explicit "no trade" outcome (`liquidity.py`, thresholds are ours).
+
+**Signals and gates are for human review; nothing trades live unless you explicitly enable it.**
 
 ## Strategy (`strategy.py`)
 
@@ -31,19 +38,40 @@ Defaults live in `config.py`; override with `--config my.json`.
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                    # 10 tests
+python -m pytest -q                    # 18 tests
 python -m nifty_upstox demo            # offline, synthetic data (checks code, not edge)
 
 export UPSTOX_ACCESS_TOKEN=...         # daily token from Upstox login flow
 python -m nifty_upstox fetch --start 2016-01-01 --out data/nifty_daily.csv
 python -m nifty_upstox backtest --csv data/nifty_daily.csv --walk-forward 4
 
+python -m nifty_upstox validate --csv data/nifty_daily.csv   # is the edge real? (see below)
+
 # daily routine (paper)
 python -m nifty_upstox scan            # ~16:00 IST: builds state/plan.json
 python -m nifty_upstox execute         # ~09:20 IST next day: PAPER orders + journal
 ```
 
-Live (real money) requires **both** `--live` and `NIFTY_LIVE_CONFIRM=YES`.
+Live (real money) requires `--live`, `NIFTY_LIVE_CONFIRM=YES`, **and** an explicit approval per order:
+
+```bash
+python -m nifty_upstox tickets show                       # plain-English ticket with replay odds
+python -m nifty_upstox tickets approve --index 0 --reply "yes"   # "ok"/"sure"/"yes to all" are refused
+```
+
+Approval is tied to a fingerprint of that exact order, so it does not carry over to another day's signal.
+
+## Extra checks added from the skill repos
+
+- **`validate`**: Deflated Sharpe (discounts for the 18 parameter variants tried), PBO across that
+  neighbourhood, purged walk-forward out-of-sample windows, drawdown analysis. Prints a plain verdict.
+  Run it on real Nifty data and treat "NO EDGE DEMONSTRATED" as a real answer.
+- **Regime overlay**: every scan plan carries a second regime read (volatility percentile, ADX, Hurst).
+  Informational unless `overlay_block_ranging` is true.
+- **Time machine**: each planned entry gets 10,000 replays (random redraws of recent daily bars) giving
+  odds of target / stop / time exit. Not a forecast; costs not included.
+- **Option liquidity gate** (`options_buy` only): blocks wide spreads, thin open interest/volume, missing quotes,
+  and fails closed if the option chain call fails. Thresholds are defaults to tune.
 
 ## Read before going live
 
@@ -61,6 +89,7 @@ Live (real money) requires **both** `--live` and `NIFTY_LIVE_CONFIRM=YES`.
 - Stop-loss moves (breakeven) are tracked in `positions.json` but the broker-side SL order is not
   modified automatically; the bot exits via the next scan if the stop is hit.
 - Upstox access tokens expire daily; automate the login flow yourself.
+- The option-chain field names used by the liquidity gate are unverified against a live account.
 - Not financial advice. Derivatives can lose more than your margin in gap events.
 
 ## Layout
@@ -73,5 +102,9 @@ nifty_upstox/
   executor.py   scan -> plan -> execute    journal.py    JSONL trade journal
   upstox.py     candles, instruments, orders   broker.py  paper / live adapters
   synthetic.py  offline test data          cli.py        commands
-tests/test_core.py
+  validate.py   DSR / PBO / walk-forward   overlay.py     regime overlay (vendored skill)
+  timemachine.py trade replay              tickets.py     per-order live approval
+  liquidity.py  option liquidity gate      vendor.py      loads third_party scripts
+third_party/    vendored agiprolabs skills + licenses + NOTICE.md
+tests/test_core.py  tests/test_integrations.py
 ```
